@@ -18,5 +18,6 @@ jobs:
         env:
           BEARER_TOKEN: ${{ secrets.BEARER_TOKEN }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          EVENT_PAYLOAD: ${{ toJson(github.event) }}
+          LATITUDE: ${{ github.event.client_payload.lat }}
+          LONGITUDE: ${{ github.event.client_payload.lng }}
         run: node check.js
