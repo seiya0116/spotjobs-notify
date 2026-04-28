@@ -3,13 +3,10 @@ const fs = require('fs');
 
 const BEARER_TOKEN = process.env.BEARER_TOKEN;
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
+const lat = parseFloat(process.env.LATITUDE);
+const lng = parseFloat(process.env.LONGITUDE);
 const RADIUS_METERS = 1000;
 const NOTIFIED_FILE = 'notified_ids.json';
-
-// イベントペイロードから緯度経度を取得
-const payload = JSON.parse(process.env.EVENT_PAYLOAD || '{}');
-const lat = parseFloat(payload.lat || (payload.client_payload && payload.client_payload.lat));
-const lng = parseFloat(payload.lng || (payload.client_payload && payload.client_payload.lng));
 
 function httpsGet(url, headers) {
   return new Promise((resolve, reject) => {
@@ -87,8 +84,7 @@ async function main() {
   }
 
   if (isNaN(lat) || isNaN(lng)) {
-    console.error('緯度経度が取得できませんでした');
-    console.error('payload: ' + JSON.stringify(payload));
+    console.error('緯度経度が取得できませんでした lat=' + process.env.LATITUDE + ' lng=' + process.env.LONGITUDE);
     process.exit(1);
   }
 
@@ -110,7 +106,7 @@ async function main() {
   });
 
   console.log('ステータス: ' + res.status);
-  console.log('レスポンス(先頭200文字): ' + res.body.substring(0, 200));
+  console.log('レスポンス(先頭300文字): ' + res.body.substring(0, 300));
 
   if (res.status !== 200) {
     console.error('APIエラー: ' + res.status);
