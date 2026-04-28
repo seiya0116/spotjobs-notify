@@ -1,0 +1,1 @@
+# spotjobs-notify
