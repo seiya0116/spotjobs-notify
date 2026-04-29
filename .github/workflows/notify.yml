@@ -19,9 +19,7 @@ jobs:
       - name: ジョブチェック実行
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          SPOTJOBS_EMAIL: ${{ secrets.SPOTJOBS_EMAIL }}
-          SPOTJOBS_PASSWORD: ${{ secrets.SPOTJOBS_PASSWORD }}
-          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+          BEARER_TOKEN: ${{ github.event.client_payload.token }}
           LATITUDE: ${{ github.event.client_payload.lat }}
           LONGITUDE: ${{ github.event.client_payload.lng }}
           DEFAULT_LAT: ${{ secrets.DEFAULT_LAT }}
