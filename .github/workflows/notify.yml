@@ -1,23 +1,28 @@
 name: SpotJobs通知
- 
+
 on:
+  schedule:
+    - cron: '*/5 * * * *'
   repository_dispatch:
     types: [check-jobs]
- 
+
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
- 
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
- 
+
       - name: ジョブチェック実行
         env:
-          BEARER_TOKEN: ${{ secrets.BEARER_TOKEN }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SPOTJOBS_EMAIL: ${{ secrets.SPOTJOBS_EMAIL }}
+          SPOTJOBS_PASSWORD: ${{ secrets.SPOTJOBS_PASSWORD }}
           LATITUDE: ${{ github.event.client_payload.lat }}
           LONGITUDE: ${{ github.event.client_payload.lng }}
+          DEFAULT_LAT: ${{ secrets.DEFAULT_LAT }}
+          DEFAULT_LNG: ${{ secrets.DEFAULT_LNG }}
         run: node check.js
