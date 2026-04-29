@@ -4,7 +4,7 @@ const fs = require('fs');
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
 const EMAIL = process.env.SPOTJOBS_EMAIL;
 const PASSWORD = process.env.SPOTJOBS_PASSWORD;
-const FIREBASE_KEY = 'AizaSyBHcAHwfuZbPT5a2sY15yVVBkH5ZyNU67k';
+const FIREBASE_KEY = process.env.FIREBASE_API_KEY;
 const RADIUS_METERS = 1000;
 const NOTIFIED_FILE = 'notified_ids.json';
 
