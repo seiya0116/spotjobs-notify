@@ -2,8 +2,9 @@ const https = require('https');
 const fs = require('fs');
 
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
-const BEARER_TOKEN = process.env.BEARER_TOKEN || process.env.FIREBASE_TOKEN;
+const BEARER_TOKEN = process.env.BEARER_TOKEN;
 const RADIUS_METERS = 1000;
+const AUTO_RESERVE_RADIUS = 500;
 const NOTIFIED_FILE = 'notified_ids.json';
 
 const lat = parseFloat(process.env.LATITUDE || process.env.DEFAULT_LAT);
@@ -78,6 +79,23 @@ function saveNotifiedIds(ids) {
   fs.writeFileSync(NOTIFIED_FILE, JSON.stringify(ids.slice(-300)));
 }
 
+async function reserveJob(workId) {
+  const url = 'https://spotjobs-api.spotapi.jp/api/v1/work/' + workId + '/reservation';
+  const res = await httpsPost(url, {}, {
+    'Authorization': 'Bearer ' + BEARER_TOKEN,
+    'Accept': '*/*',
+    'Origin': 'https://app.spot.jobs',
+    'Referer': 'https://app.spot.jobs/'
+  });
+  console.log('予約APIステータス: ' + res.status);
+  console.log('予約APIレスポンス: ' + res.body);
+  return res.status === 200;
+}
+
+async function sendSlack(text) {
+  await httpsPost(SLACK_WEBHOOK, { text });
+}
+
 async function main() {
   if (!SLACK_WEBHOOK || !BEARER_TOKEN) {
     console.error('必要なSecretsが設定されていません');
@@ -107,7 +125,6 @@ async function main() {
   });
 
   console.log('APIステータス: ' + res.status);
-  console.log('レスポンス(先頭300文字): ' + res.body.substring(0, 300));
 
   if (res.status !== 200) {
     console.error('APIエラー: ' + res.status);
@@ -125,20 +142,25 @@ async function main() {
 
   console.log('取得ジョブ数: ' + jobs.length);
 
-  const nearbyJobs = jobs.filter(job => {
-    const jobLat = job.latitude || job.lat || job.spotLatitude;
-    const jobLng = job.longitude || job.lng || job.spotLongitude;
+  // 距離計算・グレー除外
+  const availableJobs = jobs.filter(job => {
+    const jobLat = job.lat || job.latitude || job.spotLatitude;
+    const jobLng = job.lng || job.longitude || job.spotLongitude;
     if (!jobLat || !jobLng) return false;
+
+    // グレー（他の人が予約済み）を除外
+    if (job.reserved === 'RESERVED_BY_OTHERS') return false;
+
     const dist = getDistance(lat, lng, jobLat, jobLng);
     job._distance = dist;
     return dist <= RADIUS_METERS;
   });
 
-  console.log('1km以内: ' + nearbyJobs.length);
+  console.log('1km以内・予約可能: ' + availableJobs.length);
 
   const notifiedIds = loadNotifiedIds();
-  const newJobs = nearbyJobs.filter(job => {
-    const id = String(job.id || job.workId || job.spotId || '');
+  const newJobs = availableJobs.filter(job => {
+    const id = String(job.workId || job.id || job.spotId || '');
     return id && !notifiedIds.includes(id);
   });
 
@@ -146,23 +168,50 @@ async function main() {
 
   for (const job of newJobs) {
     const distance = Math.round(job._distance);
-    const reward = job.reward || job.point || job.rewardPoint || '?';
-    const address = job.address || job.spotAddress || job.location || '住所不明';
-    const workType = translateWorkType(job.workType || job.type || '');
+    const reward = job.expectedReward || job.reward || job.point || '?';
+    const address = job.address || job.spotAddress || '住所不明';
+    const spotName = job.spotDetail && job.spotDetail.spotName ? job.spotDetail.spotName : '';
+    const workType = translateWorkType(job.workType || '');
+    const workId = job.workId || job.id;
 
-    const text = '新しいジョブが近くにあります!\n'
-      + '種別: ' + workType + '\n'
-      + '場所: ' + address + '\n'
-      + '報酬: ' + reward + 'pt\n'
-      + '距離: 約' + distance + 'm\n'
-      + 'URL: https://app.spot.jobs/';
+    // 500m以内のバッテリー取出は自動予約
+    if (distance <= AUTO_RESERVE_RADIUS && job.workType === 'BATTERY_EJECT') {
+      console.log('自動予約試みる: ' + address);
+      const success = await reserveJob(workId);
+      if (success) {
+        const text = '自動予約しました!\n'
+          + '種別: ' + workType + '\n'
+          + '場所: ' + (spotName || address) + '\n'
+          + '住所: ' + address + '\n'
+          + '報酬: ' + reward + '円\n'
+          + '距離: 約' + distance + 'm\n'
+          + 'URL: https://app.spot.jobs/';
+        await sendSlack(text);
+      } else {
+        const text = '予約失敗しました\n'
+          + '種別: ' + workType + '\n'
+          + '場所: ' + (spotName || address) + '\n'
+          + '距離: 約' + distance + 'm\n'
+          + 'URL: https://app.spot.jobs/';
+        await sendSlack(text);
+      }
+    } else {
+      // 通常通知
+      const text = '新しいジョブが近くにあります!\n'
+        + '種別: ' + workType + '\n'
+        + '場所: ' + (spotName || address) + '\n'
+        + '住所: ' + address + '\n'
+        + '報酬: ' + reward + '円\n'
+        + '距離: 約' + distance + 'm\n'
+        + 'URL: https://app.spot.jobs/';
+      await sendSlack(text);
+    }
 
-    await httpsPost(SLACK_WEBHOOK, { text });
-    console.log('通知送信: ' + address + ' (' + distance + 'm)');
+    console.log('処理完了: ' + address + ' (' + distance + 'm)');
   }
 
   if (newJobs.length > 0) {
-    const newIds = newJobs.map(j => String(j.id || j.workId || j.spotId || ''));
+    const newIds = newJobs.map(j => String(j.workId || j.id || j.spotId || ''));
     saveNotifiedIds([...notifiedIds, ...newIds]);
   }
 
