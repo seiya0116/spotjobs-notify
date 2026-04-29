@@ -49,6 +49,7 @@ function httpsPost(urlStr, body, headers) {
 
 async function getFirebaseToken() {
   console.log('Firebaseログイン中...');
+  console.log('FIREBASE_KEY(先頭10文字): ' + FIREBASE_KEY.substring(0, 10));
   const url = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + FIREBASE_KEY;
   const res = await httpsPost(url, {
     returnSecureToken: true,
