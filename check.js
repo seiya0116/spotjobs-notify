@@ -1,12 +1,15 @@
 const https = require('https');
 const fs = require('fs');
 
-const BEARER_TOKEN = process.env.BEARER_TOKEN;
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
-const lat = parseFloat(process.env.LATITUDE);
-const lng = parseFloat(process.env.LONGITUDE);
+const EMAIL = process.env.SPOTJOBS_EMAIL;
+const PASSWORD = process.env.SPOTJOBS_PASSWORD;
+const FIREBASE_KEY = 'AizaSyBHcAHwfuZbPT5a2sY15yVVBkH5ZyNU67k';
 const RADIUS_METERS = 1000;
 const NOTIFIED_FILE = 'notified_ids.json';
+
+const lat = parseFloat(process.env.LATITUDE || process.env.DEFAULT_LAT);
+const lng = parseFloat(process.env.LONGITUDE || process.env.DEFAULT_LNG);
 
 function httpsGet(url, headers) {
   return new Promise((resolve, reject) => {
@@ -20,28 +23,65 @@ function httpsGet(url, headers) {
   });
 }
 
-function httpsPost(urlStr, body) {
+function httpsPost(urlStr, body, headers) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const data = JSON.stringify(body);
     const options = {
       hostname: url.hostname,
-      path: url.pathname,
+      path: url.pathname + url.search,
       method: 'POST',
-      headers: {
+      headers: Object.assign({
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(data)
-      }
+      }, headers || {})
     };
     const req = https.request(options, (res) => {
       let body = '';
       res.on('data', chunk => body += chunk);
-      res.on('end', () => resolve(body));
+      res.on('end', () => resolve({ status: res.statusCode, body }));
     });
     req.on('error', reject);
     req.write(data);
     req.end();
   });
+}
+
+async function getFirebaseToken() {
+  console.log('Firebaseログイン中...');
+  const url = 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=' + FIREBASE_KEY;
+  const res = await httpsPost(url, {
+    returnSecureToken: true,
+    email: EMAIL,
+    password: PASSWORD,
+    clientType: 'CLIENT_TYPE_WEB'
+  });
+
+  if (res.status !== 200) {
+    throw new Error('Firebaseログイン失敗: ' + res.status + ' ' + res.body);
+  }
+
+  const data = JSON.parse(res.body);
+  console.log('Firebaseトークン取得成功');
+  return data.idToken;
+}
+
+async function getSpotJobsToken(firebaseToken) {
+  console.log('SpotJobsトークン取得中...');
+  const url = 'https://spotjobs-api.spotapi.jp/api/v1/auth/login';
+  const res = await httpsPost(url, { idToken: firebaseToken }, {
+    'Origin': 'https://app.spot.jobs',
+    'Referer': 'https://app.spot.jobs/'
+  });
+
+  console.log('SpotJobsログインステータス: ' + res.status);
+  console.log('SpotJobsログインレスポンス: ' + res.body.substring(0, 200));
+
+  if (res.status === 200) {
+    const data = JSON.parse(res.body);
+    return data.token || data.accessToken || data.idToken || null;
+  }
+  return null;
 }
 
 function getDistance(lat1, lng1, lat2, lng2) {
@@ -77,19 +117,34 @@ function saveNotifiedIds(ids) {
   fs.writeFileSync(NOTIFIED_FILE, JSON.stringify(ids.slice(-300)));
 }
 
+async function sendSlack(text) {
+  await httpsPost(SLACK_WEBHOOK, { text });
+}
+
 async function main() {
-  if (!BEARER_TOKEN || !SLACK_WEBHOOK) {
-    console.error('Secretsが設定されていません');
+  if (!SLACK_WEBHOOK || !EMAIL || !PASSWORD) {
+    console.error('必要なSecretsが設定されていません');
     process.exit(1);
   }
 
   if (isNaN(lat) || isNaN(lng)) {
-    console.error('緯度経度が取得できませんでした lat=' + process.env.LATITUDE + ' lng=' + process.env.LONGITUDE);
+    console.error('緯度経度が取得できませんでした');
     process.exit(1);
   }
 
   console.log('現在地: ' + lat + ', ' + lng);
 
+  // Step1: Firebaseでログイン
+  const firebaseToken = await getFirebaseToken();
+
+  // Step2: SpotJobsのトークンを取得（失敗してもFirebaseトークンで試みる）
+  let bearerToken = await getSpotJobsToken(firebaseToken);
+  if (!bearerToken) {
+    console.log('SpotJobsトークン取得失敗、Firebaseトークンで直接試みます');
+    bearerToken = firebaseToken;
+  }
+
+  // Step3: ジョブ一覧を取得
   const workTypes = 'BATTERY_INSERT%2CBATTERY_EJECT%2CSPOT_REQUEST_COLLECT%2CBATTERY_RETURN';
   const url = 'https://spotjobs-api.spotapi.jp/api/v1/work'
     + '?pageNum=1&pageSize=100'
@@ -99,13 +154,13 @@ async function main() {
     + '&sortType=REWARD';
 
   const res = await httpsGet(url, {
-    'Authorization': 'Bearer ' + BEARER_TOKEN,
+    'Authorization': 'Bearer ' + bearerToken,
     'Accept': '*/*',
     'Origin': 'https://app.spot.jobs',
     'Referer': 'https://app.spot.jobs/'
   });
 
-  console.log('ステータス: ' + res.status);
+  console.log('APIステータス: ' + res.status);
   console.log('レスポンス(先頭300文字): ' + res.body.substring(0, 300));
 
   if (res.status !== 200) {
@@ -156,7 +211,7 @@ async function main() {
       + '距離: 約' + distance + 'm\n'
       + 'URL: https://app.spot.jobs/';
 
-    await httpsPost(SLACK_WEBHOOK, { text });
+    await sendSlack(text);
     console.log('通知送信: ' + address + ' (' + distance + 'm)');
   }
 
