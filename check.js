@@ -4,7 +4,9 @@ const fs = require('fs');
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
 const BEARER_TOKEN = process.env.BEARER_TOKEN;
 const RADIUS_METERS = 1000;
-const AUTO_RESERVE_RADIUS = 500;
+const AUTO_RESERVE_RADIUS_SINGLE = 500;
+const AUTO_RESERVE_RADIUS_MULTI = 600;
+
 const NOTIFIED_FILE = 'notified_ids.json';
 
 const lat = parseFloat(process.env.LATITUDE || process.env.DEFAULT_LAT);
@@ -174,8 +176,16 @@ async function main() {
     const workType = translateWorkType(job.workType || '');
     const workId = job.workId || job.id;
 
-    // 500m以内のバッテリー取出は自動予約
-    if (distance <= AUTO_RESERVE_RADIUS && job.workType === 'BATTERY_EJECT') {
+    // バッテリー取出の自動予約判定
+    // 取出本数はbatteryExpectedの絶対値（BATTERY_EJECTはマイナス値）
+    const batteryCount = job.batteryAdjustmentDetail
+      ? Math.abs(job.batteryAdjustmentDetail.batteryExpected || 0)
+      : 0;
+    const isMulti = batteryCount >= 2;
+    const shouldAutoReserve = job.workType === 'BATTERY_EJECT'
+      && (distance <= AUTO_RESERVE_RADIUS_SINGLE || (isMulti && distance <= AUTO_RESERVE_RADIUS_MULTI));
+
+    if (shouldAutoReserve) {
       console.log('自動予約試みる: ' + address);
       const success = await reserveJob(workId);
       if (success) {
