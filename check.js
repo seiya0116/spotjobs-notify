@@ -6,8 +6,9 @@ const BEARER_TOKEN = process.env.BEARER_TOKEN;
 const RADIUS_METERS = 1000;
 const AUTO_RESERVE_RADIUS_SINGLE = 500;
 const AUTO_RESERVE_RADIUS_MULTI = 600;
-
+const INSERT_RESERVE_RADIUS = 500;
 const NOTIFIED_FILE = 'notified_ids.json';
+const CONVENIENCE_STORES = ['セブン-イレブン', 'ファミリーマート', 'ローソン'];
 
 const lat = parseFloat(process.env.LATITUDE || process.env.DEFAULT_LAT);
 const lng = parseFloat(process.env.LONGITUDE || process.env.DEFAULT_LNG);
@@ -68,6 +69,11 @@ function translateWorkType(type) {
   return map[type] || type || '不明';
 }
 
+function isConvenienceStore(spotName) {
+  if (!spotName) return false;
+  return CONVENIENCE_STORES.some(store => spotName.includes(store));
+}
+
 function loadNotifiedIds() {
   try {
     if (fs.existsSync(NOTIFIED_FILE)) {
@@ -79,6 +85,30 @@ function loadNotifiedIds() {
 
 function saveNotifiedIds(ids) {
   fs.writeFileSync(NOTIFIED_FILE, JSON.stringify(ids.slice(-300)));
+}
+
+async function getMyBatteryCount() {
+  const url = 'https://spotjobs-api.spotapi.jp/api/v1/battery/list'
+    + '?pageNum=1&pageSize=1&batteryStatus=ALL&timeFilter=ALL&sortType=UPDATE_TIME_DESC';
+  const res = await httpsGet(url, {
+    'Authorization': 'Bearer ' + BEARER_TOKEN,
+    'Accept': '*/*',
+    'Origin': 'https://app.spot.jobs',
+    'Referer': 'https://app.spot.jobs/'
+  });
+  if (res.status !== 200) {
+    console.log('バッテリー所持数取得失敗: ' + res.status);
+    return 0;
+  }
+  try {
+    const data = JSON.parse(res.body);
+    const count = parseInt(data.totalCount || 0);
+    console.log('所持バッテリー数: ' + count);
+    return count;
+  } catch (e) {
+    console.log('バッテリー所持数パース失敗: ' + e.message);
+    return 0;
+  }
 }
 
 async function reserveJob(workId) {
@@ -110,6 +140,9 @@ async function main() {
   }
 
   console.log('現在地: ' + lat + ', ' + lng);
+
+  // 所持バッテリー数を取得
+  const myBatteryCount = await getMyBatteryCount();
 
   const workTypes = 'BATTERY_INSERT%2CBATTERY_EJECT%2CSPOT_REQUEST_COLLECT%2CBATTERY_RETURN';
   const url = 'https://spotjobs-api.spotapi.jp/api/v1/work'
@@ -149,10 +182,7 @@ async function main() {
     const jobLat = job.lat || job.latitude || job.spotLatitude;
     const jobLng = job.lng || job.longitude || job.spotLongitude;
     if (!jobLat || !jobLng) return false;
-
-    // グレー（他の人が予約済み）を除外
     if (job.reserved === 'RESERVED_BY_OTHERS') return false;
-
     const dist = getDistance(lat, lng, jobLat, jobLng);
     job._distance = dist;
     return dist <= RADIUS_METERS;
@@ -176,14 +206,34 @@ async function main() {
     const workType = translateWorkType(job.workType || '');
     const workId = job.workId || job.id;
 
-    // バッテリー取出の自動予約判定
-    // 取出本数はbatteryExpectedの絶対値（BATTERY_EJECTはマイナス値）
-    const batteryCount = job.batteryAdjustmentDetail
-      ? Math.abs(job.batteryAdjustmentDetail.batteryExpected || 0)
-      : 0;
-    const isMulti = batteryCount >= 2;
-    const shouldAutoReserve = job.workType === 'BATTERY_EJECT'
-      && (distance <= AUTO_RESERVE_RADIUS_SINGLE || (isMulti && distance <= AUTO_RESERVE_RADIUS_MULTI));
+    let shouldAutoReserve = false;
+
+    if (job.workType === 'BATTERY_EJECT') {
+      // バッテリー取出の自動予約判定
+      const batteryCount = job.batteryAdjustmentDetail
+        ? Math.abs(job.batteryAdjustmentDetail.batteryExpected || 0)
+        : 0;
+      const isMulti = batteryCount >= 2;
+      shouldAutoReserve = distance <= AUTO_RESERVE_RADIUS_SINGLE
+        || (isMulti && distance <= AUTO_RESERVE_RADIUS_MULTI);
+
+    } else if (job.workType === 'BATTERY_INSERT') {
+      // バッテリー挿入の自動予約判定
+      const needed = job.batteryAdjustmentDetail
+        ? job.batteryAdjustmentDetail.batteryExpected || 0
+        : 0;
+      const isConveni = isConvenienceStore(spotName);
+      // 所持2本以上・必要本数2本以上・所持本数以内・500m以内・コンビニのみ
+      shouldAutoReserve = myBatteryCount >= 2
+        && needed >= 2
+        && needed <= myBatteryCount
+        && distance <= INSERT_RESERVE_RADIUS
+        && isConveni;
+
+      if (shouldAutoReserve) {
+        console.log('挿入自動予約条件: 所持=' + myBatteryCount + '本 必要=' + needed + '本 店舗=' + spotName);
+      }
+    }
 
     if (shouldAutoReserve) {
       console.log('自動予約試みる: ' + address);
@@ -206,7 +256,6 @@ async function main() {
         await sendSlack(text);
       }
     } else {
-      // 通常通知
       const text = '新しいジョブが近くにあります!\n'
         + '種別: ' + workType + '\n'
         + '場所: ' + (spotName || address) + '\n'
