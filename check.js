@@ -3,7 +3,7 @@ const fs = require('fs');
 
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
 const BEARER_TOKEN = process.env.BEARER_TOKEN;
-const RADIUS_METERS = 1000;
+const RADIUS_METERS = 2000;
 const NOTIFIED_FILE = 'notified_ids.json';
 const CONVENIENCE_STORES = ['セブン-イレブン', 'ファミリーマート', 'ローソン'];
 
