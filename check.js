@@ -3,7 +3,7 @@ const fs = require('fs');
 
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK;
 const BEARER_TOKEN = process.env.BEARER_TOKEN;
-const RADIUS_METERS = 2000;
+const RADIUS_METERS = 1000;
 const NOTIFIED_FILE = 'notified_ids.json';
 const CONVENIENCE_STORES = ['セブン-イレブン', 'ファミリーマート', 'ローソン'];
 
@@ -270,7 +270,11 @@ async function main() {
         ? Math.abs(job.batteryAdjustmentDetail.batteryExpected || 0)
         : 0;
 
-      if (batteryCount >= 3) {
+      if (batteryCount < 2) {
+        const id = String(job.workId || job.id || '');
+        if (id && !notifiedIds.includes(id)) notifiedIds.push(id);
+        continue;
+      } else if (batteryCount >= 3) {
         shouldAutoReserve = distance <= EJECT_RADIUS_MULTI;
       } else {
         shouldAutoReserve = isConvenienceStore(spotName) && distance <= EJECT_RADIUS_MULTI;
