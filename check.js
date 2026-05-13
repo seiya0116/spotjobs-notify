@@ -84,28 +84,22 @@ function saveNotifiedIds(ids) {
   fs.writeFileSync(NOTIFIED_FILE, JSON.stringify(ids.slice(-300)));
 }
 
-// 夜間かどうか判定（22:00〜7:00 JST）
 function isNightTime(jstTime) {
   const hour = jstTime.getHours();
   return hour >= 22 || hour < 7;
 }
 
-// 日本の祝日を取得
 async function getJapaneseHolidays(year) {
   try {
     const url = 'https://date.nager.at/api/v3/PublicHolidays/' + year + '/JP';
     const res = await httpsGet(url, { 'Accept': 'application/json' });
     if (res.status === 200) {
-      const holidays = JSON.parse(res.body);
-      return holidays.map(h => h.date);
+      return JSON.parse(res.body).map(h => h.date);
     }
-  } catch (e) {
-    console.log('祝日取得失敗: ' + e.message);
-  }
+  } catch (e) {}
   return [];
 }
 
-// 定休日判定
 function isClosed(description, today, dayOfWeek, isHoliday) {
   if (!description) return false;
   if (!description.includes('定休日')) return false;
@@ -121,10 +115,8 @@ function isClosed(description, today, dayOfWeek, isHoliday) {
   };
 
   if (isHoliday && (closedText.includes('祝') || closedText.includes('祝日'))) return true;
-
   if (closedText.includes('土日祝') || closedText.includes('土・日・祝')) {
-    if (isHoliday) return true;
-    if (dayOfWeek === 0 || dayOfWeek === 6) return true;
+    if (isHoliday || dayOfWeek === 0 || dayOfWeek === 6) return true;
   }
 
   const nthDayMatch = closedText.match(/第([１２３４1234])([月火水木金土日])/);
@@ -132,10 +124,7 @@ function isClosed(description, today, dayOfWeek, isHoliday) {
     const nthMap = { '１': 1, '２': 2, '３': 3, '４': 4, '1': 1, '2': 2, '3': 3, '4': 4 };
     const nth = nthMap[nthDayMatch[1]];
     const targetDay = dayMap[nthDayMatch[2]];
-    if (targetDay === dayOfWeek) {
-      const weekOfMonth = Math.ceil(today.getDate() / 7);
-      if (weekOfMonth === nth) return true;
-    }
+    if (targetDay === dayOfWeek && Math.ceil(today.getDate() / 7) === nth) return true;
   }
 
   for (const [key, value] of Object.entries(dayMap)) {
@@ -154,17 +143,11 @@ async function getMyBatteryCount() {
     'Origin': 'https://app.spot.jobs',
     'Referer': 'https://app.spot.jobs/'
   });
-  if (res.status !== 200) {
-    console.log('バッテリー所持数取得失敗: ' + res.status);
-    return 0;
-  }
+  if (res.status !== 200) return 0;
   try {
     const data = JSON.parse(res.body);
-    const count = parseInt(data.totalCount || 0);
-    console.log('所持バッテリー数: ' + count);
-    return count;
+    return parseInt(data.totalCount || 0);
   } catch (e) {
-    console.log('バッテリー所持数パース失敗: ' + e.message);
     return 0;
   }
 }
@@ -177,8 +160,6 @@ async function reserveJob(workId) {
     'Origin': 'https://app.spot.jobs',
     'Referer': 'https://app.spot.jobs/'
   });
-  console.log('予約APIステータス: ' + res.status);
-  console.log('予約APIレスポンス: ' + res.body);
   return res.status === 200;
 }
 
@@ -197,9 +178,6 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('現在地: ' + lat + ', ' + lng);
-
-  // JSTの現在時刻
   const now = new Date();
   const jstOffset = 9 * 60;
   const jstTime = new Date(now.getTime() + (jstOffset - now.getTimezoneOffset()) * 60000);
@@ -208,20 +186,17 @@ async function main() {
   const year = jstTime.getFullYear();
   const nightTime = isNightTime(jstTime);
 
-  // 夜間・日中の距離設定
   const EJECT_RADIUS_SINGLE = nightTime ? 300 : 500;
   const EJECT_RADIUS_MULTI = nightTime ? 300 : 600;
   const INSERT_RADIUS = nightTime ? 300 : 500;
 
-  console.log('時間帯: ' + (nightTime ? '夜間(300m)' : '日中') + ' JST時刻: ' + jstTime.getHours() + '時');
+  console.log('時間帯: ' + (nightTime ? '夜間' : '日中'));
 
-  // 祝日取得
   const holidays = await getJapaneseHolidays(year);
   const isHoliday = holidays.includes(todayStr);
-  console.log('今日: ' + todayStr + ' 曜日: ' + dayOfWeek + ' 祝日: ' + isHoliday);
 
-  // 所持バッテリー数を取得
   const myBatteryCount = await getMyBatteryCount();
+  console.log('所持バッテリー数: ' + myBatteryCount);
 
   const workTypes = 'BATTERY_INSERT%2CBATTERY_EJECT%2CSPOT_REQUEST_COLLECT%2CBATTERY_RETURN';
   const url = 'https://spotjobs-api.spotapi.jp/api/v1/work'
@@ -237,8 +212,6 @@ async function main() {
     'Origin': 'https://app.spot.jobs',
     'Referer': 'https://app.spot.jobs/'
   });
-
-  console.log('APIステータス: ' + res.status);
 
   if (res.status !== 200) {
     console.error('APIエラー: ' + res.status);
@@ -267,7 +240,7 @@ async function main() {
     return dist <= RADIUS_METERS;
   });
 
-  console.log('1km以内・予約可能: ' + availableJobs.length);
+  console.log('範囲内・予約可能: ' + availableJobs.length);
 
   const notifiedIds = loadNotifiedIds();
   const newJobs = availableJobs.filter(job => {
@@ -286,10 +259,7 @@ async function main() {
     const workType = translateWorkType(job.workType || '');
     const workId = job.workId || job.id;
 
-    // 定休日チェック
-    const closedToday = isClosed(description, jstTime, dayOfWeek, isHoliday);
-    if (closedToday) {
-      console.log('定休日のためスキップ: ' + spotName);
+    if (isClosed(description, jstTime, dayOfWeek, isHoliday)) {
       continue;
     }
 
@@ -300,61 +270,33 @@ async function main() {
         ? Math.abs(job.batteryAdjustmentDetail.batteryExpected || 0)
         : 0;
 
-      if (batteryCount < 2) {
-        console.log('取出1本のためスキップ: ' + spotName);
-        // 通知もしない
-        const id = String(job.workId || job.id || '');
-        if (id && !notifiedIds.includes(id)) notifiedIds.push(id);
-        continue;
-      } else if (batteryCount >= 3) {
-        // 3本以上: どの店舗でもOK
-        shouldAutoReserve = distance <= EJECT_RADIUS_SINGLE
-          || distance <= EJECT_RADIUS_MULTI;
+      if (batteryCount >= 3) {
+        shouldAutoReserve = distance <= EJECT_RADIUS_MULTI;
       } else {
-        // 2本: コンビニのみ
-        const isConveni = isConvenienceStore(spotName);
-        shouldAutoReserve = isConveni && (
-          distance <= EJECT_RADIUS_SINGLE || distance <= EJECT_RADIUS_MULTI
-        );
-        if (!isConveni) console.log('2本取出だがコンビニ以外のためスキップ: ' + spotName);
+        shouldAutoReserve = isConvenienceStore(spotName) && distance <= EJECT_RADIUS_MULTI;
       }
 
     } else if (job.workType === 'BATTERY_INSERT') {
       const needed = job.batteryAdjustmentDetail
         ? job.batteryAdjustmentDetail.batteryExpected || 0
         : 0;
-      const isConveni = isConvenienceStore(spotName);
       shouldAutoReserve = myBatteryCount >= 2
         && needed >= 2
         && needed <= myBatteryCount
         && distance <= INSERT_RADIUS
-        && isConveni;
-
-      if (shouldAutoReserve) {
-        console.log('挿入自動予約条件: 所持=' + myBatteryCount + '本 必要=' + needed + '本 店舗=' + spotName);
-      }
+        && isConvenienceStore(spotName);
     }
 
     if (shouldAutoReserve) {
-      console.log('自動予約試みる: ' + spotName + ' (' + distance + 'm)');
       const success = await reserveJob(workId);
-      if (success) {
-        const text = '自動予約しました!\n'
-          + '種別: ' + workType + '\n'
-          + '場所: ' + (spotName || address) + '\n'
-          + '住所: ' + address + '\n'
-          + '報酬: ' + reward + '円\n'
-          + '距離: 約' + distance + 'm\n'
-          + 'URL: https://app.spot.jobs/';
-        await sendSlack(text);
-      } else {
-        const text = '予約失敗しました\n'
-          + '種別: ' + workType + '\n'
-          + '場所: ' + (spotName || address) + '\n'
-          + '距離: 約' + distance + 'm\n'
-          + 'URL: https://app.spot.jobs/';
-        await sendSlack(text);
-      }
+      const text = (success ? '自動予約しました!\n' : '予約失敗しました\n')
+        + '種別: ' + workType + '\n'
+        + '場所: ' + (spotName || address) + '\n'
+        + '住所: ' + address + '\n'
+        + '報酬: ' + reward + '円\n'
+        + '距離: 約' + distance + 'm\n'
+        + 'URL: https://app.spot.jobs/';
+      await sendSlack(text);
     } else {
       const text = '新しいジョブが近くにあります!\n'
         + '種別: ' + workType + '\n'
@@ -365,8 +307,6 @@ async function main() {
         + 'URL: https://app.spot.jobs/';
       await sendSlack(text);
     }
-
-    console.log('処理完了: ' + address + ' (' + distance + 'm)');
   }
 
   if (newJobs.length > 0) {
