@@ -19,7 +19,7 @@ jobs:
       - name: ジョブチェック実行
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          BEARER_TOKEN: ${{ github.event.client_payload.token }}
+          BEARER_TOKEN: ${{ github.event.client_payload.token || secrets.BEARER_TOKEN }}
           LATITUDE: ${{ github.event.client_payload.lat }}
           LONGITUDE: ${{ github.event.client_payload.lng }}
           DEFAULT_LAT: ${{ secrets.DEFAULT_LAT }}
