@@ -17,6 +17,7 @@ jobs:
           node-version: '20'
 
       - name: ジョブチェック実行
+        id: check
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
           BEARER_TOKEN: ${{ github.event.client_payload.token || secrets.BEARER_TOKEN }}
@@ -25,3 +26,10 @@ jobs:
           DEFAULT_LAT: ${{ secrets.DEFAULT_LAT }}
           DEFAULT_LNG: ${{ secrets.DEFAULT_LNG }}
         run: node check.js
+
+      - name: エラー通知
+        if: failure()
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"⚠️ SpotJobs通知システムでエラーが発生しました。\nGitHub Actionsを確認してください。\nhttps://github.com/${{ github.repository }}/actions"}' \
+          ${{ secrets.SLACK_WEBHOOK }}
