@@ -1,8 +1,6 @@
 name: SpotJobs通知
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
   repository_dispatch:
     types: [check-jobs]
 
